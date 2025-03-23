@@ -1,0 +1,57 @@
+external_components:
+  - source: github://kylin7226/esphome-components/a7670
+
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO1
+  rx_pin: GPIO3
+  baud_rate: 9600
+
+a7670:
+  id: a7670_component  # 定义 a7670_component ID
+  uart_id: uart_bus
+  pin: GPIO5
+
+button:
+  - platform: template
+    name: "重启 A7670 模块"
+    on_press:
+      then:
+        - lambda: 'id(a7670_component).restart_module();'
+
+sensor:
+  - platform: template
+    name: "注册状态"
+    id: registration_status_sensor
+
+  - platform: template
+    name: "信号强度"
+    id: signal_strength_sensor
+
+text_sensor:
+  - platform: template
+    name: "当前运营商"
+    id: operator_text_sensor
+
+  - platform: template
+    name: "接收的短信"
+    id: sms_text_sensor
+
+# 添加自定义服务以支持短信发送和AT指令透传
+api:
+  services:
+    - service: send_sms
+      variables:
+        number: string
+        message: string
+      then:
+        - lambda: 'id(a7670_component).send_sms(number, message);'
+
+    - service: send_custom_at_command
+      variables:
+        command: string
+      then:
+        - lambda: |
+            std::string response = id(a7670_component).send_custom_at_command(command);
+            ESP_LOGD("custom_at_command", "Response: %s", response.c_str());
