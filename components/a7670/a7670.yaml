@@ -1,17 +1,18 @@
 external_components:
-  - source: github://kylin7226/esphome-components/a7670
+  - source: github://kylin7226/esphome-components@main
+    components: [ a7670 ]
 
 
 uart:
-  id: uart_bus
-  tx_pin: GPIO1
-  rx_pin: GPIO3
-  baud_rate: 9600
+  - id: uart_bus
+    tx_pin: 21
+    rx_pin: 20
+    baud_rate: 115200
 
 a7670:
   id: a7670_component  # 定义 a7670_component ID
   uart_id: uart_bus
-  pin: GPIO5
+  pin: GPIO10
 
 button:
   - platform: template
