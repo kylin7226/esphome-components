@@ -4,8 +4,6 @@
 #include <sstream>
 #include <ctime>
 
-esphome::uart::UARTComponent *uart_component;
-esphome::a7670::A7670Component *a7670_component;
 
 namespace esphome {
 namespace a7670 {
