@@ -1,0 +1,58 @@
+external_components:
+  - source: github://kylin7226/esphome-components@main
+    components: [ a7670 ]
+
+uart:
+  - id: uart_bus
+    tx_pin: 21
+    rx_pin: 20
+    baud_rate: 115200
+
+
+a7670:
+  id: a7670_component  # 定义 a7670_component ID
+  uart_id: uart_bus
+  pwk_pin: GPIO10
+
+sensor:
+  - platform: a7670
+    signal_strength:
+      name: "A7670 Signal Strength"
+      unit_of_measurement: "dBm"
+      accuracy_decimals: 1
+    network_status:
+      name: "A7670 Network Status"
+
+text_sensor:
+  - platform: a7670
+    sms_receiver:
+      name: "A7670 SMS Receiver"
+    carrier_info:
+      name: "A7670 Carrier Info"
+
+switch:
+  - platform: a7670
+    restart_switch:
+      name: "A7670 Restart"
+
+api:
+  services:
+    - service: send_sms
+      variables:
+        number: string
+        message: string
+      then:
+        - lambda: 'id(a7670_component).send_sms(number, message);'
+    - service: send_custom_at_command
+      variables:
+        command: string
+      then:
+        - lambda: 'id(a7670_component).send_at_command(command);'
+    - service: list_operators
+      then:
+        - lambda: 'id(a7670_component).list_operators();'
+    - service: select_operator
+      variables:
+        operator_name: string
+      then:
+        - lambda: 'id(a7670_component).select_operator(operator_name);'
