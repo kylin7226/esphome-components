@@ -159,12 +159,12 @@ std::string A7670Component::parse_registration_status(const std::string &respons
   // 示例返回值："+CREG: 0,1"
   int status_code = 1; // 解析逻辑
   switch (status_code) {
-    case 0: return "未注册";
-    case 1: return "已注册";
-    case 2: return "搜索中";
-    case 3: return "拒绝";
-    case 5: return "漫游";
-    default: return "未知";
+    case 0: return "0";
+    case 1: return "1";
+    case 2: return "2";
+    case 3: return "3";
+    case 5: return "5";
+    default: return "0";
   }
 }
 
