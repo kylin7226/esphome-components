@@ -14,7 +14,7 @@ namespace a7670 {
 
 class A7670Component : public Component, public uart::UARTDevice {
  public:
-  A7670Component(UARTComponent *parent) : uart::UARTDevice(parent) {}
+  A7670Component(esphome::uart::UARTComponent *parent) : uart::UARTDevice(parent) {}
 
   void setup() override;
   void loop() override;
