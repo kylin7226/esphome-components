@@ -1,216 +1,145 @@
-#include "a7670.h"
-#include "esphome/core/log.h"
-#include <iomanip>
-#include <sstream>
-#include <ctime>
-
-
-namespace esphome {
-namespace a7670 {
-
-static const char *TAG = "a7670";
-
+// 初始化模块配置
 void A7670Component::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up A7670...");
-  this->send_at_command("ATE0");
-  this->send_at_command("AT+CMGF=1");  // 设置短信为文本模式
-  this->send_at_command("AT+CSCS=\"GSM\"");  // 设置字符集为 GSM
-  this->send_at_command("AT+CNMI=2,1,0,0,0");
-  this->send_at_command("AT+CFUN=1,1");
+  if (pwk_pin_) {
+    pwk_pin_->setup();
+    pwk_pin_->digital_write(true);
+  }
+
+  this->send_command_("ATE0"); // 关闭回显
+  this->send_command_("AT+CMGF=1"); // 设置短信为文本模式
+  this->send_command_("AT+CSCS=\"GSM\""); // 设置字符集为 GSM
+  this->send_command_("AT+CNMI=2,1,0,0,0"); // 设置短信接收通知
+  this->send_command_("AT+CFUN=1,1"); // 启用完整功能
+
+  this->set_interval(60000, [this]() { this->update_network_info_(); });
 }
 
-void A7670Component::loop() {
-  this->receive_sms();
+// 更新网络信息（信号强度、注册状态、运营商信息）
+void A7670Component::update_network_info_() {
+    this->send_command_("AT+CSQ");  // 查询信号强度
+    this->send_command_("AT+CREG?");  // 查询网络注册状态
+    this->send_command_("AT+COPS?");  // 查询运营商信息
 }
 
-void A7670Component::dump_config() {
-  ESP_LOGCONFIG(TAG, "A7670:");
-  LOG_PIN("  PWK Pin: ", this->pwk_pin_);
-  if (this->restart_button_ != nullptr) {
-    LOG_BUTTON("  Restart Button: ", "button", this->restart_button_);
-  }
-  if (this->registration_status_sensor_ != nullptr) {
-    LOG_SENSOR("  Registration Status Sensor: ", "sensor", this->registration_status_sensor_);
-  }
-  if (this->signal_strength_sensor_ != nullptr) {
-    LOG_SENSOR("  Signal Strength Sensor: ", "sensor", this->signal_strength_sensor_);
-  }
-  if (this->operator_text_sensor_ != nullptr) {
-    LOG_TEXT_SENSOR("  Operator Text Sensor: ", "text_sensor", this->operator_text_sensor_);
-  }
-  if (this->sms_text_sensor_ != nullptr) {
-    LOG_TEXT_SENSOR("  SMS Text Sensor: ", "text_sensor", this->sms_text_sensor_);
-  }
+// 解析串口接收到的每一行数据
+void A7670Component::parse_line_(std::string &buffer) {
+    if (buffer.find("+CSQ:") != std::string::npos) {
+        // 解析信号强度
+        size_t pos = buffer.find('+CSQ:');
+        int rssi = std::stoi(buffer.substr(pos + 5, 2));
+        if (signal_strength_sensor_) {
+            signal_strength_sensor_->publish_state((rssi * 2) - 113);  // 转换为 dBm
+        }
+    } else if (buffer.find("+CREG:") != std::string::npos) {
+        // 解析网络注册状态
+        size_t pos = buffer.find('+CREG:');
+        int status = std::stoi(buffer.substr(pos + 7, 1));
+
+        // 网络状态代码与说明的映射关系
+        static const std::map<int, std::string> network_status_map = {
+            {0, "未注册"}, {1, "已注册"}, {2, "搜索中"},
+            {3, "拒绝"}, {5, "漫游"}
+        };
+
+        std::string status_str = network_status_map.count(status) ? network_status_map.at(status) : "未知";
+        if (network_status_sensor_) {
+            network_status_sensor_->publish_state(status_str);
+        }
+    } else if (buffer.find("+CMT:") != std::string::npos) {
+        this->parse_sms_(buffer);
+    } else if (buffer.find("+COPS:") != std::string::npos) {
+        this->parse_carrier_info_(buffer);
+    }
 }
 
+// 解析短信内容并发布到传感器
+void A7670Component::parse_sms_(const std::string &buffer) {
+    size_t num_start = buffer.find('"') + 1;
+    size_t num_end = buffer.find('"', num_start);
+    size_t time_start = buffer.find(',', num_end) + 2;
+    size_t time_end = buffer.find('\n', time_start);
+
+    std::string number = buffer.substr(num_start, num_end - num_start);
+    std::string time = buffer.substr(time_start, time_end - time_start);
+    std::string content = buffer.substr(time_end + 1);
+
+    // 将 GSM 编码的短信内容转换为 UTF-8 编码
+    std::string utf8_content = gsm_to_utf8(content);
+
+    if (sms_sensor_) {
+        sms_sensor_->publish_state("手机号：" + number + "\n时间：" + time + "\n内容：" + utf8_content);
+    }
+}
+
+// 发送短信到指定号码
 void A7670Component::send_sms(const std::string &number, const std::string &message) {
-  this->send_at_command("AT+CMGS=\"" + number + "\"");
-  this->send_at_command(message + "\x1A");
-  delay(5000);  // 等待短信发送完成
-  this->send_at_command("AT+CMGD=1,4");  // 删除所有短信
+    std::string cmd = "AT+CMGS=\"" + number + "\"";
+    this->send_command_(cmd);
+    delay(500);
+    this->write_str((message + "\x1A").c_str());
+    delay(2000); // 等待短信发送完成
+
+    // 清理短信存储
+    this->send_command_("AT+CMGD=1,4");
 }
 
-void A7670Component::receive_sms() {
-  this->send_at_command("AT+CMGL=\"ALL\"");
-  std::string response = this->read_response();
-  if (this->sms_text_sensor_ != nullptr) {
-    std::string parsed_sms = parse_sms(response);
-    this->sms_text_sensor_->publish_state(parsed_sms);
-  }
+// 新增：将 GSM 编码字符串转换为 UTF-8 编码
+std::string A7670Component::gsm_to_utf8(const std::string &gsm_str) {
+    static const std::unordered_map<char, std::string> gsm_to_utf8_map = {
+        {'@', "@"}, {'£', "£"}, {'$', "$"}, {'¥', "¥"}, {'è', "è"},
+        {'é', "é"}, {'ù', "ù"}, {'ì', "ì"}, {'ò', "ò"}, {'Ç', "Ç"},
+        {'\n', "\n"}, {'Ø', "Ø"}, {'ø', "ø"}, {'Å', "Å"}, {'å', "å"}
+        // 根据需要扩展映射表
+    };
+
+    std::string utf8_result;
+    for (char c : gsm_str) {
+        if (gsm_to_utf8_map.count(c)) {
+            utf8_result += gsm_to_utf8_map.at(c);
+        } else {
+            utf8_result += c; // 未匹配的字符直接保留
+        }
+    }
+    return utf8_result;
 }
 
-void A7670Component::query_network_info() {
-  this->send_at_command("AT+CREG?");
-  std::string reg_response = this->read_response();
-  if (this->registration_status_sensor_ != nullptr) {
-    std::string reg_status = parse_registration_status(reg_response);
-    this->registration_status_sensor_->publish_state(std::stof(reg_status));
-  }
+// 解析运营商信息并发布到传感器
+void A7670Component::parse_carrier_info_(const std::string &buffer) {
+    size_t start = buffer.find('"') + 1;
+    size_t end = buffer.find('"', start);
+    std::string carrier_code = buffer.substr(start, end - start);
 
-  this->send_at_command("AT+COPS?");
-  std::string ops_response = this->read_response();
-  if (this->operator_text_sensor_ != nullptr) {
-    std::string operator_name = parse_operator_code(ops_response);
-    this->operator_text_sensor_->publish_state(operator_name);
-  }
+    // 添加运营商代码与名称的映射关系
+    static const std::map<std::string, std::string> carrier_map = {
+        {"46000", "中国移动"}, {"46001", "中国联通"}, {"46003", "中国电信"},
+        {"46006", "中国联通"}, {"46011", "中国电信"}, {"46022", "中国广电"},
+        {"23410", "giffgaff"}
+    };
 
-  this->send_at_command("AT+CSQ");
-  std::string csq_response = this->read_response();
-  if (this->signal_strength_sensor_ != nullptr) {
-    float signal_strength = parse_signal_strength(csq_response);
-    this->signal_strength_sensor_->publish_state(signal_strength);
-  }
+    std::string carrier_name = carrier_map.count(carrier_code) ? carrier_map.at(carrier_code) : carrier_code;
+
+    if (carrier_sensor_) {
+        carrier_sensor_->publish_state(carrier_name);
+    }
 }
 
-void A7670Component::query_available_operators() {
-  this->send_at_command("AT+COPS=?");
-  std::string response = this->read_response();
-  // 解析并处理可用运营商
+// 列出可用运营商
+void A7670Component::list_operators() {
+  this->send_command_("AT+COPS=?");
 }
 
+// 选择指定运营商
 void A7670Component::select_operator(const std::string &operator_name) {
-  this->send_at_command("AT+COPS=1,0,\"" + operator_name + "\"");
+  std::string cmd = "AT+COPS=1,0,\"" + operator_name + "\"";
+  this->send_command_(cmd);
 }
 
-void A7670Component::restart_module() {
-  if (this->pwk_pin_ != nullptr) {
-    this->pwk_pin_->digital_write(false);
+// 重启模块
+void A7670Component::restart_module_() {
+  if (pwk_pin_) {
+    pwk_pin_->digital_write(false);
     delay(1000);
-    this->pwk_pin_->digital_write(true);
-    ESP_LOGD(TAG, "Restarting A7670 module");
+    pwk_pin_->digital_write(true);
+    delay(5000); // 等待模块重启
   }
 }
-
-void A7670Component::send_at_command(const std::string &command) {
-  ESP_LOGD(TAG, "Sending AT command: %s", command.c_str());
-  this->write_str((command + "\r\n").c_str());
-}
-
-std::string A7670Component::read_response() {
-  std::string response;
-  while (this->available()) {
-    response += (char) this->read();
-  }
-  ESP_LOGD(TAG, "Received response: %s", response.c_str());
-  return response;
-}
-
-std::string A7670Component::gsm_to_utf8(const std::string &gsm) {
-  std::string utf8;
-  for (char c : gsm) {
-    if (c >= 0x20 && c <= 0x7F) {
-      utf8 += c;
-    } else if (c == 0x0A) {
-      utf8 += '\n';
-    } else if (c == 0x0D) {
-      utf8 += '\r';
-    } else {
-      utf8 += '?';  // 未知字符替换为 '?'
-    }
-  }
-  return utf8;
-}
-
-std::string A7670Component::parse_sms(const std::string &response) {
-  std::string result;
-  size_t pos = response.find("\r\n");
-  if (pos != std::string::npos) {
-    std::string header = response.substr(0, pos);
-    std::string body = response.substr(pos + 2);
-    size_t start = header.find("+CMGL: ");
-    if (start != std::string::npos) {
-      size_t end = header.find(",", start);
-      std::string status = header.substr(start + 7, end - start - 7);
-      start = header.find("\"", end + 1);
-      end = header.find("\"", start + 1);
-      std::string phone_number = header.substr(start + 1, end - start - 1);
-      start = header.find("\"", end + 1);
-      end = header.find("\"", start + 1);
-      std::string time = header.substr(start + 1, end - start - 1);
-      std::string message = gsm_to_utf8(body);
-
-      result = "时间: " + time + ", 来自: " + phone_number + ", 内容: " + message;
-    }
-  }
-  return result;
-}
-
-std::string A7670Component::parse_registration_status(const std::string &response) {
-  // 解析注册状态
-  // 示例返回值："+CREG: 0,1"
-  int status_code = 1; // 解析逻辑
-  switch (status_code) {
-    case 0: return "0";
-    case 1: return "1";
-    case 2: return "2";
-    case 3: return "3";
-    case 5: return "5";
-    default: return "0";
-  }
-}
-
-std::string A7670Component::parse_operator_code(const std::string &response) {
-  // 解析运营商代码
-  // 示例返回值："+COPS: 0,0,"46000""
-  std::string operator_code = "46000"; // 解析逻辑
-  if (operator_code == "46000") return "中国移动";
-  if (operator_code == "46001") return "中国联通";
-  if (operator_code == "46003") return "中国电信";
-  if (operator_code == "46006") return "中国联通";
-  if (operator_code == "46011") return "中国电信";
-  if (operator_code == "46022") return "中国广电";
-  if (operator_code == "23410") return "giffgaff";
-  return "未知运营商";
-}
-
-float A7670Component::parse_signal_strength(const std::string &response) {
-  // 解析信号强度
-  // 示例返回值："+CSQ: 15,99"
-  int rssi = 15; // 解析逻辑
-  return 2 * rssi - 113; // 将RSSI转换为dBm
-}
-
-std::string A7670Component::send_custom_at_command(const std::string &command) {
-  this->send_at_command(command);
-  std::string response = this->read_response();
-  return response;
-}
-
-void A7670Component::register_sensor(sensor::Sensor *sensor, const std::string &type) {
-  if (type == "registration_status") {
-    this->registration_status_sensor_ = sensor;
-  } else if (type == "signal_strength") {
-    this->signal_strength_sensor_ = sensor;
-  }
-}
-
-void A7670Component::register_text_sensor(text_sensor::TextSensor *text_sensor, const std::string &type) {
-  if (type == "operator") {
-    this->operator_text_sensor_ = text_sensor;
-  } else if (type == "sms") {
-    this->sms_text_sensor_ = text_sensor;
-  }
-}
-
-}  // namespace a7670
-}  // namespace esphome
