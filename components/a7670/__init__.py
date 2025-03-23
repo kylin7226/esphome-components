@@ -33,8 +33,11 @@ CONFIG_SCHEMA = cv.Schema({
 
 def to_code(config):
     # 初始化 UARTComponent
-    uart_component = cg.new_Pvariable(config[CONF_ID], config)
+    uart_component = cg.new_Pvariable(config[CONF_ID])
+    yield cg.register_component(uart_component, config)
+    yield uart.register_uart_device(uart_component, config)
 
+    # 初始化 A7670Component 并传递 UARTComponent
     var = cg.new_Pvariable(config[CONF_ID], uart_component)
     yield cg.register_component(var, config)
     yield uart.register_uart_device(var, config)
