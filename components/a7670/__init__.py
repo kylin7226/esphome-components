@@ -32,7 +32,10 @@ CONFIG_SCHEMA = cv.Schema({
 }).extend(uart.UART_DEVICE_SCHEMA).extend(cv.COMPONENT_SCHEMA)
 
 def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
+    # 初始化 UARTComponent
+    uart_component = cg.new_Pvariable(config[CONF_ID], config)
+
+    var = cg.new_Pvariable(config[CONF_ID], uart_component)
     yield cg.register_component(var, config)
     yield uart.register_uart_device(var, config)
     pin = yield cg.gpio_pin_expression(config[CONF_PIN])
