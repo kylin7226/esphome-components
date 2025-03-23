@@ -1,6 +1,7 @@
 external_components:
   - source: github://kylin7226/esphome-components/a7670
 
+
 uart:
   id: uart_bus
   tx_pin: GPIO1
@@ -8,15 +9,16 @@ uart:
   baud_rate: 9600
 
 a7670:
+  id: a7670_component  # 定义 a7670_component ID
   uart_id: uart_bus
-  pwk_pin: GPIO5
+  pin: GPIO5
 
 button:
   - platform: template
     name: "重启 A7670 模块"
     on_press:
       then:
-        - a7670.restart_module
+        - lambda: 'id(a7670_component).restart_module();'
 
 sensor:
   - platform: template
