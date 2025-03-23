@@ -11,11 +11,11 @@ static const char *TAG = "a7670";
 
 void A7670Component::setup() {
   ESP_LOGCONFIG(TAG, "Setting up A7670...");
-  this->send_command_("ATE0");
-  this->send_command_("AT+CMGF=1");  // Set SMS to text mode
-  this->send_command_("AT+CSCS=\"GSM\"");  // Set character set to GSM
-  this->send_command_("AT+CNMI=2,1,0,0,0");
-  this->send_command_("AT+CFUN=1,1");
+  this->send_at_command("ATE0");
+  this->send_at_command("AT+CMGF=1");  // 设置短信为文本模式
+  this->send_at_command("AT+CSCS=\"GSM\"");  // 设置字符集为 GSM
+  this->send_at_command("AT+CNMI=2,1,0,0,0");
+  this->send_at_command("AT+CFUN=1,1");
 }
 
 void A7670Component::loop() {
@@ -26,28 +26,26 @@ void A7670Component::dump_config() {
   ESP_LOGCONFIG(TAG, "A7670:");
   LOG_PIN("  PWK Pin: ", this->pwk_pin_);
   if (this->restart_button_ != nullptr) {
-    LOG_BUTTON("  Restart Button: ", this->restart_button_);
+    LOG_BUTTON("  Restart Button: ", "button", this->restart_button_);
   }
   if (this->registration_status_sensor_ != nullptr) {
-    LOG_SENSOR("  Registration Status Sensor: ", this->registration_status_sensor_);
+    LOG_SENSOR("  Registration Status Sensor: ", "sensor", this->registration_status_sensor_);
   }
   if (this->signal_strength_sensor_ != nullptr) {
-    LOG_SENSOR("  Signal Strength Sensor: ", this->signal_strength_sensor_);
+    LOG_SENSOR("  Signal Strength Sensor: ", "sensor", this->signal_strength_sensor_);
   }
   if (this->operator_text_sensor_ != nullptr) {
-    LOG_TEXT_SENSOR("  Operator Text Sensor: ", this->operator_text_sensor_);
+    LOG_TEXT_SENSOR("  Operator Text Sensor: ", "text_sensor", this->operator_text_sensor_);
   }
   if (this->sms_text_sensor_ != nullptr) {
-    LOG_TEXT_SENSOR("  SMS Text Sensor: ", this->sms_text_sensor_);
+    LOG_TEXT_SENSOR("  SMS Text Sensor: ", "text_sensor", this->sms_text_sensor_);
   }
 }
 
 void A7670Component::send_sms(const std::string &number, const std::string &message) {
   this->send_at_command("AT+CMGS=\"" + number + "\"");
   this->send_at_command(message + "\x1A");
-  // 等待短信发送完成
-  delay(5000);
-  // 发送完成后清理存储
+  delay(5000);  // 等待短信发送完成
   this->send_at_command("AT+CMGD=1,4");  // 删除所有短信
 }
 
@@ -55,7 +53,6 @@ void A7670Component::receive_sms() {
   this->send_at_command("AT+CMGL=\"ALL\"");
   std::string response = this->read_response();
   if (this->sms_text_sensor_ != nullptr) {
-    // 解析并处理短信消息，包括接收时间、发送手机号和短信内容
     std::string parsed_sms = parse_sms(response);
     this->sms_text_sensor_->publish_state(parsed_sms);
   }
@@ -65,15 +62,13 @@ void A7670Component::query_network_info() {
   this->send_at_command("AT+CREG?");
   std::string reg_response = this->read_response();
   if (this->registration_status_sensor_ != nullptr) {
-    // 解析并处理注册状态
     std::string reg_status = parse_registration_status(reg_response);
-    this->registration_status_sensor_->publish_state(reg_status);
+    this->registration_status_sensor_->publish_state(std::stof(reg_status));
   }
 
   this->send_at_command("AT+COPS?");
   std::string ops_response = this->read_response();
   if (this->operator_text_sensor_ != nullptr) {
-    // 解析并处理当前运营商
     std::string operator_name = parse_operator_code(ops_response);
     this->operator_text_sensor_->publish_state(operator_name);
   }
@@ -81,7 +76,6 @@ void A7670Component::query_network_info() {
   this->send_at_command("AT+CSQ");
   std::string csq_response = this->read_response();
   if (this->signal_strength_sensor_ != nullptr) {
-    // 解析并处理信号强度
     float signal_strength = parse_signal_strength(csq_response);
     this->signal_strength_sensor_->publish_state(signal_strength);
   }
@@ -108,7 +102,7 @@ void A7670Component::restart_module() {
 
 void A7670Component::send_at_command(const std::string &command) {
   ESP_LOGD(TAG, "Sending AT command: %s", command.c_str());
-  this->write_str(command + "\r\n");
+  this->write_str((command + "\r\n").c_str());
 }
 
 std::string A7670Component::read_response() {
@@ -121,8 +115,6 @@ std::string A7670Component::read_response() {
 }
 
 std::string A7670Component::gsm_to_utf8(const std::string &gsm) {
-  // 这里是将 GSM 编码转换为 UTF-8 编码的逻辑
-  // 示例：将 GSM 7-bit 编码转换为 UTF-8
   std::string utf8;
   for (char c : gsm) {
     if (c >= 0x20 && c <= 0x7F) {
@@ -139,10 +131,7 @@ std::string A7670Component::gsm_to_utf8(const std::string &gsm) {
 }
 
 std::string A7670Component::parse_sms(const std::string &response) {
-  // 解析短信的接收时间、发送手机号和内容
-  // 示例格式："+CMGL: 1,"REC READ","+1234567890","","21/10/01,10:30:00+32"\r\nHello, world!\r\n"
   std::string result;
-  // 假设 response 格式正确
   size_t pos = response.find("\r\n");
   if (pos != std::string::npos) {
     std::string header = response.substr(0, pos);
@@ -170,12 +159,12 @@ std::string A7670Component::parse_registration_status(const std::string &respons
   // 示例返回值："+CREG: 0,1"
   int status_code = 1; // 解析逻辑
   switch (status_code) {
-    case 0: return "未注册";
-    case 1: return "已注册";
-    case 2: return "搜索中";
-    case 3: return "拒绝";
-    case 5: return "漫游";
-    default: return "未知";
+    case 0: return "0";
+    case 1: return "1";
+    case 2: return "2";
+    case 3: return "3";
+    case 5: return "5";
+    default: return "0";
   }
 }
 
