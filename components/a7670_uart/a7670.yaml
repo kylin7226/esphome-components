@@ -1,6 +1,6 @@
 external_components:
   - source: github://kylin7226/esphome-components@main
-    components: [ a7670 ]
+    components: [ a7670_uart ]
 
 uart:
   - id: uart_bus
